@@ -202,13 +202,13 @@ export const PhotoAnalysis: React.FC<PhotoAnalysisProps> = ({ onAddStop, onSaveT
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const processImage = useCallback(async (base64Str: string) => {
+  const processImage = useCallback(async (base64Str: string, fileName?: string) => {
     setImageSrc(base64Str);
     setResult(null);
     setLoading(true);
     setLoadingFact(TRAVEL_FACTS[Math.floor(Math.random() * TRAVEL_FACTS.length)]);
     try {
-      const analysisResult = await analyzePhoto(base64Str);
+      const analysisResult = await analyzePhoto(base64Str, fileName);
       setResult(analysisResult);
     } catch (err) {
       console.error('Photo analysis error', err);
@@ -222,7 +222,7 @@ export const PhotoAnalysis: React.FC<PhotoAnalysisProps> = ({ onAddStop, onSaveT
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        if (event.target?.result) processImage(event.target.result as string);
+        if (event.target?.result) processImage(event.target.result as string, file.name);
       };
       reader.readAsDataURL(file);
     }
@@ -235,7 +235,7 @@ export const PhotoAnalysis: React.FC<PhotoAnalysisProps> = ({ onAddStop, onSaveT
     if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        if (ev.target?.result) processImage(ev.target.result as string);
+        if (ev.target?.result) processImage(ev.target.result as string, file.name);
       };
       reader.readAsDataURL(file);
     }

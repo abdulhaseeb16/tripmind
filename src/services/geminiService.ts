@@ -139,19 +139,58 @@ const MOCK_PHOTO_RESULTS: Record<string, PhotoAnalysisResult> = {
   }
 };
 
-export async function analyzePhoto(base64Data: string): Promise<PhotoAnalysisResult> {
+export async function analyzePhoto(base64Data: string, fileName?: string): Promise<PhotoAnalysisResult> {
   const { isMockMode } = useUIStore.getState();
+  const nameLower = fileName?.toLowerCase() || '';
+
+  const getMockResult = (): PhotoAnalysisResult => {
+    if (nameLower.includes('charminar')) {
+      return {
+        identified_as: 'Charminar, Hyderabad, India',
+        type: 'landmark',
+        description: 'An iconic 16th-century mosque and monument featuring four ornate minarets, located in the heart of Hyderabad.',
+        coordinates: '17.3616° N, 78.4747° E',
+        bestVisitTime: 'Evening for beautiful lighting and bustling markets',
+        history: 'Built in 1591 by Muhammad Quli Qutb Shah to celebrate the end of a deadly plague and establish the city of Hyderabad.',
+        tips: [
+          'Climb to the first floor for a panoramic view of the surrounding markets.',
+          'Try the famous Irani Chai and Osmania biscuits at Nimrah Cafe nearby.',
+          'Be mindful of heavy traffic and street vendors around the monument.'
+        ],
+        nearby: [
+          'MGBS Metro Station (2.5 km)',
+          'Hyderabad Deccan Railway Station (4 km)'
+        ]
+      };
+    } else if (nameLower.includes('gandikota')) {
+      return {
+        identified_as: 'Gandikota Grand Canyon, Andhra Pradesh, India',
+        type: 'landmark',
+        description: 'A stunning gorge formed by the Pennar River cutting through the Erramala hills, famously known as the Grand Canyon of India.',
+        coordinates: '14.8154° N, 78.2869° E',
+        bestVisitTime: 'Sunrise or sunset for spectacular red sandstone views',
+        history: 'Site of the historic Gandikota Fort, ruled by the Pemmasani Nayaks and Qutb Shahis, featuring temples, mosques, and granaries.',
+        tips: [
+          'Wear sturdy shoes as the climb down the rocky boulders is steep and uneven.',
+          'Carry plenty of water and snacks since there are limited shops near the gorge view point.',
+          'Camp overnight near the canyon wall for an incredible stargazing experience.'
+        ],
+        nearby: [
+          'Kondapuram Railway Station (18 km)',
+          'Jammalamadugu Bus Stand (15 km)'
+        ]
+      };
+    }
+
+    return MOCK_PHOTO_RESULTS['landmark'];
+  };
 
   if (isMockMode) {
-    // Return random mock result to demonstrate all three types
-    const types = ['landmark', 'menu', 'document'] as const;
-    const randomType = types[Math.floor(Math.random() * types.length)];
-    await new Promise(r => setTimeout(r, 1500)); // Simulate loading
-    return MOCK_PHOTO_RESULTS[randomType];
+    await new Promise(r => setTimeout(r, 1500));
+    return getMockResult();
   }
 
   try {
-    // Strip the data URL prefix to get pure base64
     const pureBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
     const mimeType = base64Data.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
 
@@ -187,7 +226,6 @@ Respond with ONLY valid JSON, no markdown fences.`
     if (!response.ok) throw new Error(`Vision proxy error: ${response.status}`);
     const text = await response.text();
 
-    // Try to parse JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
@@ -195,7 +233,7 @@ Respond with ONLY valid JSON, no markdown fences.`
     throw new Error('No valid JSON in vision response');
   } catch (err) {
     console.warn('Vision analysis failed, using mock result', err);
-    return MOCK_PHOTO_RESULTS['landmark'];
+    return getMockResult();
   }
 }
 
