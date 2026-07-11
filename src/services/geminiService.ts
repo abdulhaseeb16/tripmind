@@ -185,54 +185,116 @@ export async function analyzePhoto(base64Data: string, fileName?: string): Promi
     return MOCK_PHOTO_RESULTS['landmark'];
   };
 
-  if (isMockMode) {
+  const apiKey = import.meta.env.VITE_ZENMUX_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '';
+  const modelName = import.meta.env.VITE_ZENMUX_MODEL || 'google/gemini-2.0-flash';
+
+  if (isMockMode || !apiKey || apiKey.includes('_key_here')) {
     await new Promise(r => setTimeout(r, 1500));
     return getMockResult();
   }
 
+  const isZenMux = apiKey.startsWith('AQ.');
+
+  const promptText = `Analyze this travel photo and return a detailed JSON object. Determine if it is a "landmark", "menu", "document", "landscape", or "unknown".
+
+You MUST output ONLY a valid raw JSON object matching this schema. Do not wrap in markdown code blocks:
+{
+  "identified_as": "Name of the place, landmark, menu, or document",
+  "type": "landmark" | "menu" | "document" | "landscape" | "unknown",
+  "description": "General description or summary of what is in the photo",
+  "coordinates": "If it is a landmark, provide coordinates (e.g. 17.3616 N, 78.4747 E). Otherwise omit.",
+  "bestVisitTime": "If it is a landmark, provide best time to visit (e.g. Morning or evening). Otherwise omit.",
+  "history": "Brief historical background if a landmark or culture site. Otherwise omit.",
+  "tips": ["List of 2-4 travel tips, advice, or suggestions"],
+  "nearby": ["List of 2-3 nearby access points or train stations if landmark"],
+  "dishes": [{"name": "Dish name", "desc": "description", "recommendation": "Must try", "price": "$12"}], // Only if type is menu
+  "document_details": {"title": "Doc title", "extracted_info": ["info 1", "info 2"], "timeline_impact": "impact"} // Only if type is document
+}`;
+
   try {
-    const pureBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-    const mimeType = base64Data.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-
-    const response = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('supabase_token') || 'anon'}`,
-        'X-Request-Type': 'vision',
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [
+    if (isZenMux) {
+      const response = await fetch('https://zenmux.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
             {
-              inline_data: { mime_type: mimeType, data: pureBase64 }
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: promptText,
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: base64Data,
+                  },
+                },
+              ],
             },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0.3,
+        }),
+      });
+
+      if (!response.ok) throw new Error(`ZenMux API error: ${response.status}`);
+      const resJson = await response.json();
+      const textContent = resJson.choices?.[0]?.message?.content || '';
+
+      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
+      }
+    } else {
+      const pureBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+      const mimeType = base64Data.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
             {
-              text: `Analyze this travel photo and return a detailed JSON object. Determine if it is a "landmark", "menu", "document", "landscape", or "unknown".
-
-For landmark: include identified_as, type, description, history, tips (array), nearby (array), coordinates, bestVisitTime.
-For menu: include identified_as, type, description, dishes array with {name, desc, allergen, recommendation, price}.
-For document: include identified_as, type, description, document_details with {title, extracted_info array, timeline_impact}.
-
-Respond with ONLY valid JSON, no markdown fences.`
+              parts: [
+                {
+                  text: promptText
+                },
+                {
+                  inlineData: {
+                    mimeType,
+                    data: pureBase64
+                  }
+                }
+              ]
             }
-          ]
-        }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
-      }),
-    });
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.3
+          }
+        })
+      });
 
-    if (!response.ok) throw new Error(`Vision proxy error: ${response.status}`);
-    const text = await response.text();
+      if (!response.ok) throw new Error(`Gemini direct API error: ${response.status}`);
+      const resJson = await response.json();
+      const textContent = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
+      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
+      }
     }
-    throw new Error('No valid JSON in vision response');
+    throw new Error('No valid JSON in API response');
   } catch (err) {
-    console.warn('Vision analysis failed, using mock result', err);
+    console.warn('Vision API analysis failed, using mock result', err);
     return getMockResult();
   }
 }
