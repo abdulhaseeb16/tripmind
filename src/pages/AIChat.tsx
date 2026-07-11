@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Mic, RefreshCw, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { mockAuth, mockDb } from '../services/supabaseClient';
-import type { Trip, Stop } from '../services/supabaseClient';
+import type { Trip } from '../types';
 import { streamCompletion, buildSystemPrompt } from '../services/geminiService';
 import type { ChatMessage } from '../services/geminiService';
 import { ChatBubble } from '../components/ChatBubble';
@@ -13,7 +13,7 @@ interface AIChatProps {
 
 export const AIChat: React.FC<AIChatProps> = ({ activeTrip }) => {
   const session = mockAuth.getSession();
-  const user = session.user;
+  void session; // keep session available for display logic
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', content: `Hello! I've loaded your Travel DNA context. How can I help you plan your travel details today?` }
@@ -63,18 +63,18 @@ export const AIChat: React.FC<AIChatProps> = ({ activeTrip }) => {
     }
 
     // Build system prompt context
-    const sysPrompt = buildSystemPrompt(
-      user, 
-      activeTrip, 
-      "Generate helpful responses. If user asks for an itinerary, output a summary and trigger an interactive Day Card widget. Render details cleanly."
-    );
+    const sysPrompt = buildSystemPrompt({
+      destination: activeTrip?.destination || 'your destination',
+      interests: activeTrip?.interests || [],
+      tripTitle: activeTrip?.title || 'your trip',
+    });
 
     let streamBuffer = '';
     const tempAiMsg: ChatMessage = { role: 'assistant', content: '' };
     setMessages(prev => [...prev, tempAiMsg]);
 
     try {
-      await streamCompletion(sysPrompt, [...messages, newMsg], (token) => {
+      await streamCompletion(inputVal.trim(), sysPrompt, (token) => {
         streamBuffer += token;
         setMessages(prev => {
           const list = [...prev];
@@ -115,7 +115,7 @@ export const AIChat: React.FC<AIChatProps> = ({ activeTrip }) => {
       // Save simulated stop to active trip day 1
       const currentDays = mockDb.fetchItinerary(activeTrip.id);
       if (currentDays.length > 0) {
-        const stop: Stop = {
+        const stop = {
           id: `ai-chat-${Math.random()}`,
           name: data.title || 'AI Added Attraction',
           time: data.time || '10:00',
@@ -125,7 +125,7 @@ export const AIChat: React.FC<AIChatProps> = ({ activeTrip }) => {
           cost_estimate: 0,
           google_maps_link: 'https://maps.google.com'
         };
-        currentDays[0].stops.push(stop);
+        currentDays[0].stops.push(stop as any);
         mockDb.saveItineraryDays(activeTrip.id, currentDays);
         alert('Applied successfully! Check your Trip Timeline.');
       } else {

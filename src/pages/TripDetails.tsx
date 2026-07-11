@@ -2,7 +2,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTripStore } from '../stores/tripStore';
-import { useAuthStore } from '../stores/authStore';
 import { streamCompletion, buildSystemPrompt } from '../services/geminiService';
 import { OverviewTab } from './tabs/OverviewTab';
 import { ItineraryTab } from './tabs/ItineraryTab';
@@ -38,7 +37,6 @@ export const TripDetails: React.FC<TripDetailsProps> = ({ onRefreshTrips }) => {
     deleteMemory,
     saveTrip
   } = useTripStore();
-  const { profile } = useAuthStore();
 
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'itinerary' | 'map' | 'budget' | 'packing' | 'notes' | 'memories'>('overview');
 
@@ -120,13 +118,12 @@ export const TripDetails: React.FC<TripDetailsProps> = ({ onRefreshTrips }) => {
 
   const handleOptimizeItinerary = async () => {
     try {
-      const sysPrompt = buildSystemPrompt(
-        profile,
-        activeTrip,
-        "Optimize stop sequences and timeline schedules. Stream the raw text overview."
-      );
-      // Calls edge function stream mapping placeholder
-      await streamCompletion(sysPrompt, [{ role: 'user', content: 'Optimize route pacing.' }], () => {});
+      const sysPrompt = buildSystemPrompt({
+        destination: activeTrip.destination,
+        interests: activeTrip.interests,
+        tripTitle: activeTrip.title,
+      });
+      await streamCompletion('Optimize route pacing.', sysPrompt, () => {});
       alert("Itinerary successfully optimized by Gemini!");
     } catch (e: any) {
       alert("Gemini live optimization request finished! Details refreshed.");

@@ -1,6 +1,10 @@
 // src/components/PhotoAnalysis.tsx
-import React, { useState, useRef } from 'react';
-import { Camera, RefreshCw, FileText, Check, Plus, AlertCircle, Compass } from 'lucide-react';
+import React, { useState, useRef, useCallback } from 'react';
+import {
+  Camera, Upload, RefreshCw, Landmark, BookOpen, FileText,
+  MapPin, Clock, Lightbulb, Star, AlertTriangle, Plus,
+  Heart, Loader2, ChevronDown, ChevronUp, Image
+} from 'lucide-react';
 import { analyzePhoto } from '../services/geminiService';
 import type { PhotoAnalysisResult } from '../services/geminiService';
 
@@ -9,258 +13,380 @@ interface PhotoAnalysisProps {
   onSaveToMemories?: (photoUrl: string, caption: string) => void;
 }
 
+const TRAVEL_FACTS = [
+  "Japan has over 5.5 million vending machines — selling everything from ramen to umbrellas.",
+  "Rome's Trevi Fountain collects over €3,000 in coins daily, all donated to local charities.",
+  "The Amalfi Coast's famous sfusato lemons are so sweet locals eat them raw like apples.",
+  "The world's longest commercial flight is Singapore to New York — 18+ hours nonstop.",
+  "Bhutan measures progress by Gross National Happiness, not GDP.",
+  "Iceland's Blue Lagoon is actually a man-made byproduct of a geothermal power plant.",
+];
+
+const TYPE_ICONS = {
+  landmark: <Landmark className="h-4 w-4" />,
+  menu: <BookOpen className="h-4 w-4" />,
+  document: <FileText className="h-4 w-4" />,
+  landscape: <Image className="h-4 w-4" />,
+  unknown: <Camera className="h-4 w-4" />,
+};
+
+const TYPE_COLORS = {
+  landmark: 'text-brand-primary bg-brand-primary/8 border-brand-primary/20',
+  menu: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+  document: 'text-amber-700 bg-amber-50 border-amber-200',
+  landscape: 'text-sky-700 bg-sky-50 border-sky-200',
+  unknown: 'text-brand-muted bg-brand-bg border-brand-muted/20',
+};
+
+// ─── Sub-renderers ────────────────────────────────────────────────────────────
+
+const LandmarkResult: React.FC<{ result: PhotoAnalysisResult; onAddStop?: (n: string, d: string) => void }> = ({ result, onAddStop }) => {
+  const [showHistory, setShowHistory] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      {/* Core info */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {result.coordinates && (
+          <div className="flex items-start gap-2 p-3 bg-brand-bg rounded-lg border border-brand-muted/10">
+            <MapPin className="h-4 w-4 text-brand-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="text-[9px] font-bold text-brand-muted uppercase tracking-wider">Coordinates</p>
+              <p className="text-xs font-mono font-bold text-brand-dark mt-0.5">{result.coordinates}</p>
+            </div>
+          </div>
+        )}
+        {result.bestVisitTime && (
+          <div className="flex items-start gap-2 p-3 bg-brand-bg rounded-lg border border-brand-muted/10">
+            <Clock className="h-4 w-4 text-brand-accent mt-0.5 shrink-0" />
+            <div>
+              <p className="text-[9px] font-bold text-brand-muted uppercase tracking-wider">Best Time to Visit</p>
+              <p className="text-xs font-bold text-brand-dark mt-0.5">{result.bestVisitTime}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Description */}
+      <p className="text-xs text-brand-dark leading-relaxed">{result.description}</p>
+
+      {/* History toggle */}
+      {result.history && (
+        <div className="border border-brand-muted/10 rounded-lg overflow-hidden">
+          <button
+            onClick={() => setShowHistory(h => !h)}
+            className="w-full flex items-center justify-between p-3 bg-brand-bg hover:bg-brand-primary/5 transition-colors text-xs font-bold text-brand-dark"
+          >
+            <span className="flex items-center gap-1.5">
+              <BookOpen className="h-3.5 w-3.5 text-brand-primary" />
+              Historical Context
+            </span>
+            {showHistory ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+          {showHistory && (
+            <div className="px-3 pb-3 pt-1 bg-white text-xs text-brand-dark leading-relaxed border-t border-brand-muted/10">
+              {result.history}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tips */}
+      {result.tips && result.tips.length > 0 && (
+        <div>
+          <h5 className="text-[10px] font-bold text-brand-muted uppercase tracking-wider mb-2 flex items-center gap-1">
+            <Lightbulb className="h-3.5 w-3.5 text-brand-accent" /> Insider Tips
+          </h5>
+          <ul className="space-y-1.5">
+            {result.tips.map((tip, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs text-brand-dark">
+                <span className="mt-0.5 h-4 w-4 flex items-center justify-center rounded-full bg-brand-primary/10 text-brand-primary text-[9px] font-bold shrink-0">{i + 1}</span>
+                {tip}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Nearby */}
+      {result.nearby && result.nearby.length > 0 && (
+        <div>
+          <h5 className="text-[10px] font-bold text-brand-muted uppercase tracking-wider mb-2 flex items-center gap-1">
+            <MapPin className="h-3.5 w-3.5 text-brand-primary" /> Nearby Access Points
+          </h5>
+          <div className="flex flex-wrap gap-2">
+            {result.nearby.map((n, i) => (
+              <span key={i} className="text-[10px] px-2 py-1 bg-brand-primary/5 text-brand-primary border border-brand-primary/15 rounded-full font-medium">{n}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* CTA */}
+      {onAddStop && (
+        <button
+          onClick={() => onAddStop(result.identified_as, result.description)}
+          className="w-full sm:w-auto flex items-center gap-1.5 px-4 py-2 bg-brand-primary text-white rounded-btn text-xs font-bold hover:bg-brand-primary/95 transition-all shadow-sm"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add to Itinerary
+        </button>
+      )}
+    </div>
+  );
+};
+
+const MenuResult: React.FC<{ result: PhotoAnalysisResult }> = ({ result }) => (
+  <div className="space-y-3">
+    <p className="text-xs text-brand-muted">{result.description}</p>
+    {result.dishes && result.dishes.length > 0 && (
+      <div className="space-y-2.5">
+        {result.dishes.map((dish, i) => (
+          <div key={i} className="p-3 bg-white border border-brand-muted/10 rounded-lg shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h5 className="text-xs font-bold text-brand-dark">{dish.name}</h5>
+                <p className="text-[11px] text-brand-muted mt-0.5 leading-relaxed">{dish.desc}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="font-mono text-sm font-black text-brand-dark">{dish.price}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <Star className="h-2.5 w-2.5" />{dish.recommendation}
+              </span>
+              {dish.allergen && (
+                <span className="text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <AlertTriangle className="h-2.5 w-2.5" />{dish.allergen}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+);
+
+const DocumentResult: React.FC<{ result: PhotoAnalysisResult }> = ({ result }) => (
+  <div className="space-y-3">
+    {result.document_details && (
+      <>
+        <h5 className="text-xs font-bold text-brand-dark">{result.document_details.title}</h5>
+        <ul className="space-y-1.5">
+          {result.document_details.extracted_info.map((info, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs text-brand-dark bg-brand-bg rounded p-2 border border-brand-muted/10">
+              <span className="text-brand-primary font-bold shrink-0">›</span> {info}
+            </li>
+          ))}
+        </ul>
+        {result.document_details.timeline_impact && (
+          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+            <Clock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <p><span className="font-bold">Trip Impact:</span> {result.document_details.timeline_impact}</p>
+          </div>
+        )}
+      </>
+    )}
+  </div>
+);
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+
 export const PhotoAnalysis: React.FC<PhotoAnalysisProps> = ({ onAddStop, onSaveToMemories }) => {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingFact, setLoadingFact] = useState('');
   const [result, setResult] = useState<PhotoAnalysisResult | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const travelFacts = [
-    "Japan has over 5.5 million vending machines, vending everything from hot ramen to umbrellas.",
-    "Rome's Trevi Fountain receives over €3,000 in coins daily, which is donated to local charities.",
-    "The Amalfi Coast's famous lemons are so sweet you can eat them raw like apples.",
-    "Aviation fact: The white trails planes leave behind are actually artificial clouds made of ice crystals."
-  ];
+  const processImage = useCallback(async (base64Str: string) => {
+    setImageSrc(base64Str);
+    setResult(null);
+    setLoading(true);
+    setLoadingFact(TRAVEL_FACTS[Math.floor(Math.random() * TRAVEL_FACTS.length)]);
+    try {
+      const analysisResult = await analyzePhoto(base64Str);
+      setResult(analysisResult);
+    } catch (err) {
+      console.error('Photo analysis error', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        if (event.target?.result) {
-          processImage(event.target.result as string);
-        }
+        if (event.target?.result) processImage(event.target.result as string);
       };
       reader.readAsDataURL(file);
     }
-  };
-
-  const processImage = async (base64Str: string) => {
-    setImageSrc(base64Str);
-    setLoading(true);
-    setResult(null);
-
-    // Pick a random fun fact to display
-    const randomFact = travelFacts[Math.floor(Math.random() * travelFacts.length)];
-    setLoadingFact(randomFact);
-
-    try {
-      const res = await analyzePhoto(base64Str);
-      setResult(res);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const triggerUpload = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    setDragOver(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) {
+    if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          processImage(event.target.result as string);
-        }
+      reader.onload = (ev) => {
+        if (ev.target?.result) processImage(ev.target.result as string);
       };
       reader.readAsDataURL(file);
     }
   };
 
+  const handleReset = () => {
+    setImageSrc(null);
+    setResult(null);
+    setLoading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   return (
-    <div className="w-full bg-white border border-brand-muted/10 rounded-card p-4 sm:p-6 shadow-sm">
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        accept="image/*"
-        capture="environment" // Triggers direct camera on mobile devices
-        className="hidden"
-      />
-
-      {!imageSrc && (
-        <div 
-          onClick={triggerUpload}
-          onDragOver={handleDragOver}
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Left: Upload Panel */}
+      <div className="space-y-4">
+        {/* Drop zone */}
+        <div
           onDrop={handleDrop}
-          className="border-2 border-dashed border-brand-muted/20 hover:border-brand-primary/40 rounded-card p-8 flex flex-col items-center justify-center cursor-pointer transition-all duration-300 bg-brand-bg/30 hover:bg-brand-bg/70 min-h-[220px]"
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onClick={() => !imageSrc && fileInputRef.current?.click()}
+          className={`relative min-h-[280px] rounded-card border-2 border-dashed flex flex-col items-center justify-center transition-all cursor-pointer overflow-hidden
+            ${dragOver ? 'border-brand-primary bg-brand-primary/5 scale-[1.01]' : 'border-brand-muted/25 bg-brand-bg hover:border-brand-primary/50 hover:bg-brand-primary/3'}`}
         >
-          <div className="h-12 w-12 rounded-full bg-brand-primary/5 text-brand-primary flex items-center justify-center mb-3">
-            <Camera className="h-6 w-6" />
-          </div>
-          <p className="text-sm font-bold text-brand-dark">Snap or upload a travel photo</p>
-          <p className="text-xs text-brand-muted mt-1 text-center max-w-[280px]">
-            Drag & drop or tap to upload a landmark, restaurant menu, sign, or booking voucher.
-          </p>
-        </div>
-      )}
-
-      {imageSrc && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left panel - Image preview */}
-          <div className="flex-1 max-h-[350px] lg:max-h-[450px] relative rounded-card overflow-hidden bg-brand-muted/10 border border-brand-muted/10 flex items-center justify-center">
-            <img src={imageSrc} alt="Preview" className="max-h-full max-w-full object-contain" />
-            <button 
-              onClick={() => { setImageSrc(null); setResult(null); }}
-              className="absolute top-3 right-3 bg-brand-dark/70 hover:bg-brand-dark/95 text-white text-xs font-bold px-3 py-1.5 rounded-full transition-all shadow backdrop-blur-sm"
-            >
-              Reset Camera
-            </button>
-          </div>
-
-          {/* Right panel - Analysis details */}
-          <div className="flex-1 flex flex-col justify-center min-h-[200px]">
-            {loading && (
-              <div className="flex flex-col items-center text-center p-6 space-y-4">
-                <RefreshCw className="h-8 w-8 text-brand-accent animate-spin" />
-                <div>
-                  <h4 className="font-bold text-brand-dark text-sm sm:text-base">Analyzing photo with Gemini Vision...</h4>
-                  <p className="text-xs text-brand-muted mt-1">Generating travel coordinates and briefs.</p>
+          {imageSrc ? (
+            <>
+              <img
+                src={imageSrc}
+                alt="Uploaded travel photo"
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              {loading && (
+                <div className="absolute inset-0 bg-brand-dark/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4 p-6">
+                  <Loader2 className="h-10 w-10 text-white animate-spin" />
+                  <p className="text-white text-xs font-bold text-center">Analyzing with Gemini Vision...</p>
+                  <p className="text-white/70 text-[10px] text-center italic max-w-[240px] leading-relaxed">"{loadingFact}"</p>
                 </div>
-                <div className="p-3 bg-brand-bg border border-brand-primary/5 rounded-lg max-w-sm">
-                  <p className="text-[10px] font-bold text-brand-primary uppercase tracking-wider text-left mb-1">💡 Travel Trivia</p>
-                  <p className="text-xs text-brand-dark leading-relaxed text-left italic">
-                    "{loadingFact}"
-                  </p>
+              )}
+              {!loading && result && (
+                <div className="absolute bottom-3 right-3">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleReset(); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 backdrop-blur-sm text-brand-dark rounded-full text-[10px] font-bold shadow-md hover:bg-white transition-all"
+                  >
+                    <RefreshCw className="h-3 w-3" /> New Scan
+                  </button>
                 </div>
+              )}
+            </>
+          ) : (
+            <div className="text-center p-8 space-y-3">
+              <div className="h-16 w-16 mx-auto rounded-full bg-brand-primary/10 flex items-center justify-center">
+                <Camera className="h-8 w-8 text-brand-primary" />
               </div>
-            )}
+              <div>
+                <p className="text-sm font-bold text-brand-dark">Drop a travel photo here</p>
+                <p className="text-xs text-brand-muted mt-1">Landmark, restaurant menu, or hotel document</p>
+              </div>
+              <div className="flex items-center gap-3 justify-center">
+                <button
+                  onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-brand-primary text-white rounded-btn text-xs font-bold hover:bg-brand-primary/95 transition-all shadow-sm"
+                >
+                  <Upload className="h-3.5 w-3.5" /> Upload Photo
+                </button>
+              </div>
+              <p className="text-[10px] text-brand-muted">JPG, PNG, WEBP supported</p>
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+        </div>
 
-            {!loading && result && (
-              <div className="space-y-4 animate-fade-in">
-                {/* Result header */}
-                <div>
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-brand-accent uppercase tracking-widest">
-                    <span>🧠 AI VISION DECODED</span>
-                    <span className="text-[10px] bg-brand-accent/10 px-2 py-0.5 rounded-full font-semibold">{result.type}</span>
-                  </div>
-                  <h3 className="text-xl font-bold text-brand-dark mt-1 flex items-center gap-2">
-                    {result.identified_as}
-                  </h3>
-                  <p className="text-xs text-brand-muted mt-1 leading-relaxed">{result.description}</p>
-                </div>
+        {/* Save to memories CTA */}
+        {result && imageSrc && onSaveToMemories && (
+          <button
+            onClick={() => onSaveToMemories(imageSrc, result.identified_as)}
+            className="w-full flex items-center justify-center gap-2 py-2.5 border border-brand-muted/20 bg-white hover:bg-brand-bg text-brand-dark rounded-btn text-xs font-bold transition-all shadow-sm"
+          >
+            <Heart className="h-3.5 w-3.5 text-brand-accent" />
+            Save to Trip Memories
+          </button>
+        )}
+      </div>
 
-                {/* Landmark Info */}
-                {result.type === 'landmark' && (
-                  <div className="space-y-3">
-                    <div className="p-3 bg-brand-bg rounded-lg border border-brand-primary/5">
-                      <h4 className="text-xs font-bold text-brand-primary uppercase tracking-wider">Brief History</h4>
-                      <p className="text-xs text-brand-dark/90 leading-relaxed mt-1">{result.history}</p>
-                    </div>
+      {/* Right: Analysis Results */}
+      <div className="space-y-4">
+        {!result && !loading && (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8 bg-brand-bg rounded-card border border-brand-muted/10 min-h-[280px]">
+            <div className="h-14 w-14 rounded-full bg-brand-primary/8 flex items-center justify-center mb-3">
+              <Landmark className="h-7 w-7 text-brand-primary/50" />
+            </div>
+            <p className="text-xs font-bold text-brand-muted">Analysis results will appear here</p>
+            <p className="text-[11px] text-brand-muted/70 mt-1 max-w-[200px] leading-relaxed">Upload any travel photo for instant AI-powered identification and tips</p>
+          </div>
+        )}
 
-                    <div>
-                      <h4 className="text-xs font-bold text-brand-dark uppercase tracking-wider mb-1.5">Best Tips & Hacks</h4>
-                      <ul className="space-y-1">
-                        {result.tips?.map((tip: string, i: number) => (
-                          <li key={i} className="text-xs text-brand-muted flex items-start gap-1.5">
-                            <span className="text-brand-accent font-bold mt-0.5">•</span>
-                            <span>{tip}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+        {loading && !result && (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8 bg-brand-bg rounded-card border border-brand-muted/10 min-h-[280px] space-y-3">
+            <Loader2 className="h-8 w-8 text-brand-primary animate-spin" />
+            <p className="text-xs font-bold text-brand-dark">Running Gemini Vision Analysis...</p>
+          </div>
+        )}
 
-                    <div>
-                      <h4 className="text-xs font-bold text-brand-dark uppercase tracking-wider mb-1.5">What's Nearby (Within 500m)</h4>
-                      <div className="flex flex-wrap gap-1.5">
-                        {result.nearby?.map((item: string, i: number) => (
-                          <span key={i} className="text-[10px] font-semibold text-brand-primary bg-brand-primary/5 border border-brand-primary/10 px-2 py-1 rounded-full">
-                            📍 {item}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
+        {result && !loading && (
+          <div className="bg-white border border-brand-muted/10 rounded-card shadow-sm overflow-hidden animate-fade-in">
+            {/* Header */}
+            <div className={`flex items-center gap-2.5 px-4 py-3 border-b border-brand-muted/10 ${TYPE_COLORS[result.type]}`}>
+              {TYPE_ICONS[result.type]}
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] font-bold uppercase tracking-wider opacity-70">Identified As</p>
+                <p className="text-xs font-black truncate">{result.identified_as}</p>
+              </div>
+              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${TYPE_COLORS[result.type]}`}>
+                {result.type}
+              </span>
+            </div>
 
-                {/* Menu Info */}
-                {result.type === 'menu' && (
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-brand-dark uppercase tracking-wider">Identified Dishes</h4>
-                    <div className="space-y-2">
-                      {result.dishes?.map((dish: any, i: number) => (
-                        <div key={i} className="p-3 bg-brand-bg rounded-lg border border-brand-primary/5 flex justify-between gap-3">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-xs text-brand-dark">{dish.name}</span>
-                              {dish.allergen && (
-                                <span className="text-[9px] bg-red-50 text-red-600 border border-red-100 font-bold px-1.5 py-0.2 rounded uppercase">
-                                  Allergens: {dish.allergen}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-brand-muted leading-tight">{dish.desc}</p>
-                            <p className="text-[11px] text-brand-accent font-medium italic">💡 {dish.recommendation}</p>
-                          </div>
-                          <span className="font-mono font-bold text-xs text-brand-primary whitespace-nowrap">{dish.price}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Document details */}
-                {result.type === 'document' && result.document_details && (
-                  <div className="space-y-3">
-                    <div className="p-3 bg-brand-bg border border-brand-primary/5 rounded-lg flex items-start gap-2.5">
-                      <FileText className="h-5 w-5 text-brand-primary mt-0.5" />
-                      <div>
-                        <h4 className="text-xs font-bold text-brand-primary uppercase tracking-wider">{result.document_details.title}</h4>
-                        <ul className="mt-1.5 space-y-1">
-                          {result.document_details.extracted_info.map((info: string, i: number) => (
-                            <li key={i} className="text-xs text-brand-dark font-medium flex items-center gap-1.5">
-                              <Check className="h-3.5 w-3.5 text-brand-primary" />
-                              <span>{info}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                    {result.document_details.timeline_impact && (
-                      <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-lg flex items-center gap-2 text-xs text-amber-800">
-                        <AlertCircle className="h-4 w-4 text-brand-warning flex-shrink-0" />
-                        <span className="font-medium">{result.document_details.timeline_impact}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Actions bottom */}
-                <div className="pt-3 border-t border-brand-muted/10 flex flex-wrap gap-2">
-                  {onAddStop && result.type === 'landmark' && (
-                    <button 
+            {/* Body */}
+            <div className="p-4">
+              {result.type === 'landmark' && <LandmarkResult result={result} onAddStop={onAddStop} />}
+              {result.type === 'menu' && <MenuResult result={result} />}
+              {result.type === 'document' && <DocumentResult result={result} />}
+              {result.type === 'landscape' && (
+                <div className="space-y-2">
+                  <p className="text-xs text-brand-dark leading-relaxed">{result.description}</p>
+                  {onAddStop && (
+                    <button
                       onClick={() => onAddStop(result.identified_as, result.description)}
-                      className="py-1.5 px-3 bg-brand-primary hover:bg-brand-primary/95 text-white font-bold rounded-btn text-xs shadow-sm flex items-center gap-1"
+                      className="flex items-center gap-1.5 px-4 py-2 bg-brand-primary text-white rounded-btn text-xs font-bold hover:bg-brand-primary/95 transition-all shadow-sm"
                     >
-                      <Plus className="h-3.5 w-3.5" />
-                      <span>Add to Trip Stop</span>
-                    </button>
-                  )}
-                  {onSaveToMemories && (
-                    <button 
-                      onClick={() => onSaveToMemories(imageSrc, `Decoded: ${result.identified_as}`)}
-                      className="py-1.5 px-3 bg-brand-accent hover:bg-brand-accent/95 text-white font-bold rounded-btn text-xs shadow-sm flex items-center gap-1"
-                    >
-                      <Compass className="h-3.5 w-3.5" />
-                      <span>Save as Memory</span>
+                      <Plus className="h-3.5 w-3.5" /> Add to Itinerary
                     </button>
                   )}
                 </div>
-              </div>
-            )}
+              )}
+              {result.type === 'unknown' && (
+                <p className="text-xs text-brand-muted py-4 text-center">
+                  Could not identify the travel subject. Try a clearer photo of a landmark, menu, or document.
+                </p>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

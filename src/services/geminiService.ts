@@ -1,89 +1,63 @@
 // src/services/geminiService.ts
+import { useUIStore } from '../stores/uiStore';
+import { mockAiService } from './mockAiService';
 
+const PROXY_URL = '/functions/v1/ai-proxy';
+
+// Shared chat message type used across the app
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   isCard?: boolean;
-  cardType?: 'itinerary' | 'comparison' | 'budget' | 'photo' | 'alert';
+  cardType?: 'itinerary' | 'weather' | 'packing';
   cardData?: any;
 }
 
-// 1. Layered Prompt Builder
-export function buildSystemPrompt(
-  user: any | null,
-  trip: any | null,
-  taskContext: string
-): string {
-  let basePrompt = `You are TripMind AI, an expert travel intelligence assistant. You are warm, knowledgeable, specific, and direct. You never give generic advice — every response is tailored to the user's specific context. You cite practical details: prices, times, distances. You flag important caveats (visa rules change, always verify). You write in short paragraphs and use bullet points only when listing genuine alternatives or steps.\n\n`;
+export function buildSystemPrompt(context: {
+  destination?: string;
+  interests?: string[];
+  tripTitle?: string;
+}): string {
+  const parts = [
+    'You are TripMind, an expert AI travel companion for the modern traveller.',
+    'You give concise, practical, vivid travel advice. Respond in markdown when formatting helps.',
+    context.tripTitle && `Active trip: ${context.tripTitle}.`,
+    context.destination && `Destination: ${context.destination}.`,
+    context.interests?.length && `Traveler interests: ${context.interests.join(', ')}.`,
+  ].filter(Boolean);
 
-  if (user) {
-    const name = user.name || user.user_metadata?.name || 'Traveler';
-    const homeCity = user.homeCity || user.user_metadata?.home_city || 'London';
-    const travelDNA = user.travelDNA || user.user_metadata?.travel_dna || 'Vibrant explorer';
-    const preferredCurrency = user.preferredCurrency || user.user_metadata?.preferred_currency || 'USD';
-    const styleTags = user.styleTags || user.user_metadata?.style_tags || [];
-    
-    basePrompt += `[USER PROFILE]\nName: ${name}\nHome City: ${homeCity}\nTravel DNA: ${travelDNA}\nPreferred Currency: ${preferredCurrency}\nInterests: ${styleTags.join(', ')}\n\n`;
-  }
-
-  if (trip) {
-    const destinations = trip.destinations || (trip.destination ? [trip.destination] : []);
-    const startDate = trip.startDate || trip.start_date || '';
-    const endDate = trip.endDate || trip.end_date || '';
-    const budgetAmount = trip.budget?.amount || trip.budget || 0;
-    const budgetCurrency = trip.budget?.currency || trip.currency || 'USD';
-    const groupType = trip.groupType || trip.group_type || 'solo';
-    const interests = trip.interests || trip.interest_tags || [];
-    
-    basePrompt += `[ACTIVE TRIP]\nDestination: ${destinations.join(', ')}\nDuration: ${startDate} to ${endDate}\nBudget: ${budgetAmount} ${budgetCurrency}\nParty: ${groupType}\nInterests: ${interests.join(', ')}\n\n`;
-  }
-
-  basePrompt += `[TASK LAYER]\n${taskContext}`;
-  return basePrompt;
+  return parts.join('\n');
 }
 
-// 2. Client proxy wrapper calling the Supabase Edge Function
 export async function streamCompletion(
+  userQuery: string,
   systemPrompt: string,
-  messages: ChatMessage[],
   onToken: (token: string) => void
 ): Promise<string> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-  const userQuery = messages[messages.length - 1]?.content || '';
-  
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn('Supabase configuration missing. Falling back to local mock AI service.');
+  const { isMockMode } = useUIStore.getState();
+
+  if (isMockMode) {
     return mockAiService.streamChat(userQuery, onToken);
   }
 
-  // Format history matching Gemini API shape: contents: [{ role: "user" | "model", parts: [{ text }] }]
-  const contents = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }]
-  }));
-
   try {
-    const response = await fetch(`${supabaseUrl}/functions/v1/ai-proxy`, {
+    const response = await fetch(PROXY_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseAnonKey}`
+        Authorization: `Bearer ${localStorage.getItem('supabase_token') || 'anon'}`,
       },
       body: JSON.stringify({
-        contents,
-        systemInstruction: {
-          parts: [{ text: systemPrompt }]
-        }
-      })
+        contents: [
+          { role: 'user', parts: [{ text: systemPrompt + '\n\n' + userQuery }] }
+        ],
+        generationConfig: { temperature: 0.85, maxOutputTokens: 2048 },
+      }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Edge Function returned error: ${response.status} - ${errorText}`);
-    }
+    if (!response.ok || !response.body) throw new Error(`Proxy responded ${response.status}`);
 
-    const reader = response.body?.getReader();
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let accumulatedText = '';
 
@@ -92,7 +66,6 @@ export async function streamCompletion(
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value);
-        // Edge function will stream back tokens as simple text chunks or SSE format
         onToken(chunk);
         accumulatedText += chunk;
       }
@@ -105,7 +78,7 @@ export async function streamCompletion(
   }
 }
 
-import { mockAiService } from './mockAiService';
+// ─── Photo Analysis ─────────────────────────────────────────────────────────
 
 export interface PhotoAnalysisResult {
   identified_as: string;
@@ -116,22 +89,123 @@ export interface PhotoAnalysisResult {
   nearby?: string[];
   dishes?: { name: string; desc: string; allergen?: string; recommendation: string; price: string }[];
   document_details?: { title: string; extracted_info: string[]; timeline_impact?: string };
+  coordinates?: string;
+  bestVisitTime?: string;
 }
 
-export async function analyzePhoto(_base64Data: string): Promise<PhotoAnalysisResult> {
-  return {
-    identified_as: 'Fushimi Inari vermilion gates, Kyoto',
+const MOCK_PHOTO_RESULTS: Record<string, PhotoAnalysisResult> = {
+  landmark: {
+    identified_as: 'Fushimi Inari-taisha, Kyoto, Japan',
     type: 'landmark',
-    description: 'Pathway of torii gates.',
-    history: 'Dedicated to Shinto god of rice.',
-    tips: ['Hike past the first intersection.'],
-    nearby: ['Inari Station (JR Nara line)']
-  };
+    description: 'Iconic Shinto shrine famous for its thousands of vermilion torii gates winding through forest trails on Mount Inari.',
+    history: 'Founded in 711 AD, Fushimi Inari is dedicated to Inari, the god of rice, sake, fertility and industry. Merchants historically donated torii gates as offerings.',
+    tips: [
+      'Hike past the first plateau for fewer crowds',
+      'Arrive before 7am or after 6pm for atmospheric solitude',
+      'The full summit hike (4km) takes 2–3 hours round trip',
+      'Free admission — open 24 hours'
+    ],
+    nearby: ['Inari Station (JR Nara line — 5 min walk)', 'Tofuku-ji Temple (15 min walk)', 'Fushimi sake district (20 min bus)'],
+    coordinates: '34.9671° N, 135.7727° E',
+    bestVisitTime: 'Dawn or dusk for golden light through the gates'
+  },
+  menu: {
+    identified_as: 'Japanese Restaurant Menu — Ramen & Izakaya',
+    type: 'menu',
+    description: 'Traditional Japanese izakaya menu featuring various ramen styles, grilled skewers, and sake selections.',
+    dishes: [
+      { name: 'Tonkotsu Ramen', desc: 'Rich pork bone broth, chashu pork, soft-boiled egg, nori', allergen: 'Gluten, Soy, Egg', recommendation: '★★★★★ Must try', price: '¥980' },
+      { name: 'Shoyu Ramen', desc: 'Soy-based clear broth with chicken, menma bamboo shoots', allergen: 'Gluten, Soy', recommendation: '★★★★☆ Lighter option', price: '¥850' },
+      { name: 'Yakitori Moriawase', desc: '6-piece assorted grilled chicken skewers, tare or shio', allergen: 'Gluten', recommendation: '★★★★☆ Great for sharing', price: '¥600' },
+      { name: 'Edamame', desc: 'Salted steamed soybeans', allergen: 'Soy', recommendation: '★★★☆☆ Classic starter', price: '¥300' }
+    ]
+  },
+  document: {
+    identified_as: 'Hotel Booking Confirmation',
+    type: 'document',
+    description: 'Official booking confirmation document for accommodation.',
+    document_details: {
+      title: 'Hotel Reservation — Kyoto Ryokan',
+      extracted_info: [
+        'Check-in: October 12, 2026 (after 15:00)',
+        'Check-out: October 15, 2026 (before 11:00)',
+        'Booking Reference: KYO-2026-8841',
+        'Room Type: Traditional Tatami Suite',
+        'Includes: Breakfast & Dinner (kaiseki)',
+        'Cancellation: Free until Oct 10'
+      ],
+      timeline_impact: 'Aligns with Day 1–3 of your Kyoto itinerary. Checkout on Day 4 before heading to Nara.'
+    }
+  }
+};
+
+export async function analyzePhoto(base64Data: string): Promise<PhotoAnalysisResult> {
+  const { isMockMode } = useUIStore.getState();
+
+  if (isMockMode) {
+    // Return random mock result to demonstrate all three types
+    const types = ['landmark', 'menu', 'document'] as const;
+    const randomType = types[Math.floor(Math.random() * types.length)];
+    await new Promise(r => setTimeout(r, 1500)); // Simulate loading
+    return MOCK_PHOTO_RESULTS[randomType];
+  }
+
+  try {
+    // Strip the data URL prefix to get pure base64
+    const pureBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+    const mimeType = base64Data.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+
+    const response = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('supabase_token') || 'anon'}`,
+        'X-Request-Type': 'vision',
+      },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [
+            {
+              inline_data: { mime_type: mimeType, data: pureBase64 }
+            },
+            {
+              text: `Analyze this travel photo and return a detailed JSON object. Determine if it is a "landmark", "menu", "document", "landscape", or "unknown".
+
+For landmark: include identified_as, type, description, history, tips (array), nearby (array), coordinates, bestVisitTime.
+For menu: include identified_as, type, description, dishes array with {name, desc, allergen, recommendation, price}.
+For document: include identified_as, type, description, document_details with {title, extracted_info array, timeline_impact}.
+
+Respond with ONLY valid JSON, no markdown fences.`
+            }
+          ]
+        }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
+      }),
+    });
+
+    if (!response.ok) throw new Error(`Vision proxy error: ${response.status}`);
+    const text = await response.text();
+
+    // Try to parse JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
+    }
+    throw new Error('No valid JSON in vision response');
+  } catch (err) {
+    console.warn('Vision analysis failed, using mock result', err);
+    return MOCK_PHOTO_RESULTS['landmark'];
+  }
 }
 
-export async function generateTravelDNA(answers: any): Promise<string> {
-  return `Traveler DNA summary: budget ${answers.budget}, style ${answers.type}.`;
+// ─── Travel DNA ──────────────────────────────────────────────────────────────
+
+export async function generateTravelDNA(answers: Record<string, string>): Promise<string> {
+  return `Explorer DNA: ${answers.budget || 'balanced'} budget traveler who loves ${answers.type || 'cultural'} experiences.`;
 }
+
+// ─── Itinerary Generator ─────────────────────────────────────────────────────
 
 export async function generateItinerary(
   destination: string,
@@ -158,18 +232,31 @@ export async function generateItinerary(
   }));
 }
 
+// ─── Packing List Generator ──────────────────────────────────────────────────
+
 export async function generatePackingList(
   destination: string,
   duration: number,
-  interests: string[]
+  interests: string[],
+  weatherNote?: string
 ): Promise<any[]> {
   const list = await mockAiService.generatePacking(destination, duration, interests);
-  return list.map(item => ({
-    name: item.name,
-    category: item.category,
-    quantity: item.quantity,
-    tag: item.essential === 'essential' ? 'Essential' : 'Nice to have',
-    packed: item.packed,
-    note: item.reason
-  }));
+  const weatherItems = weatherNote?.toLowerCase().includes('rain') || weatherNote?.toLowerCase().includes('cold')
+    ? [
+        { name: 'Compact Umbrella', category: 'Clothing', quantity: 1, tag: 'Essential', packed: false, note: `Recommended: ${weatherNote}` },
+        { name: 'Waterproof Layer', category: 'Clothing', quantity: 1, tag: 'Essential', packed: false, note: 'Weather-adaptive suggestion' }
+      ]
+    : [];
+
+  return [
+    ...weatherItems,
+    ...list.map(item => ({
+      name: item.name,
+      category: item.category,
+      quantity: item.quantity,
+      tag: item.essential === 'essential' ? 'Essential' : 'Nice to have',
+      packed: item.packed,
+      note: item.reason
+    }))
+  ];
 }

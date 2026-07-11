@@ -2,7 +2,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUIStore } from '../stores/uiStore';
-import { useAuthStore } from '../stores/authStore';
 import { streamCompletion, buildSystemPrompt } from '../services/geminiService';
 import { mockAiService } from '../services/mockAiService';
 import { RefreshCw, Play, ShieldAlert, Sparkles, Home } from 'lucide-react';
@@ -10,7 +9,6 @@ import { RefreshCw, Play, ShieldAlert, Sparkles, Home } from 'lucide-react';
 export const TestAI: React.FC = () => {
   const navigate = useNavigate();
   const { useLiveAi, toggleAiMode } = useUIStore();
-  const { profile } = useAuthStore();
   
   const [prompt, setPrompt] = useState('Suggest a 3-day itinerary for Kyoto, Japan.');
   const [output, setOutput] = useState('');
@@ -27,14 +25,13 @@ export const TestAI: React.FC = () => {
     try {
       if (useLiveAi) {
         // Live Mode (using edge function proxy)
-        const sysPrompt = buildSystemPrompt(
-          profile,
-          null,
-          "Generate a highly specific travel overview. Stream it back."
-        );
+        const sysPrompt = buildSystemPrompt({
+          destination: 'your destination',
+          tripTitle: 'Test Trip',
+        });
         await streamCompletion(
+          prompt.trim(),
           sysPrompt,
-          [{ role: 'user', content: prompt }],
           (token) => {
             setOutput(prev => prev + token);
           }

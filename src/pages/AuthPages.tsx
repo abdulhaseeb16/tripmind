@@ -73,7 +73,11 @@ export const AuthPages: React.FC = () => {
       // Generate Travel DNA via Gemini
       setDnaLoading(true);
       try {
-        const dnaSummary = await generateTravelDNA(quizAnswers);
+        const answersForDNA: Record<string, string> = {
+          ...quizAnswers,
+          interests: Array.isArray(quizAnswers.interests) ? quizAnswers.interests.join(', ') : quizAnswers.interests,
+        };
+        const dnaSummary = await generateTravelDNA(answersForDNA);
         setGeneratedDna(dnaSummary);
         mockAuth.updateMetadata({
           travel_dna: dnaSummary,

@@ -2,31 +2,35 @@
 import { create } from 'zustand';
 import type { Trip, ItineraryDay, PackingItem, Expense, Memory } from '../types';
 
-interface TripState {
+export interface TripState {
   trips: Trip[];
   activeTrip: Trip | null;
-  packingItems: Record<string, PackingItem[]>; // tripId -> PackingItems
-  expenses: Record<string, Expense[]>; // tripId -> Expenses
-  memories: Record<string, Memory[]>; // tripId -> Memories
+  packingItems: Record<string, PackingItem[]>;
+  expenses: Record<string, Expense[]>;
+  memories: Record<string, Memory[]>;
   loading: boolean;
-  
+
   // Actions
   fetchTrips: () => void;
   setActiveTrip: (trip: Trip | null) => void;
   saveTrip: (trip: Trip) => void;
   deleteTrip: (tripId: string) => void;
   saveItinerary: (tripId: string, itinerary: ItineraryDay[]) => void;
-  
+
   // Packing Actions
   fetchPacking: (tripId: string) => PackingItem[];
   savePackingItem: (tripId: string, item: PackingItem) => void;
+  addPackingItem: (tripId: string, item: Omit<PackingItem, 'quantity'> & { quantity?: number }) => void;
   deletePackingItem: (tripId: string, itemId: string) => void;
-  
+
+  // Itinerary Convenience
+  addCustomStop: (tripId: string, dayIndex: number, stop: any) => void;
+
   // Expense Actions
   fetchExpenses: (tripId: string) => Expense[];
   saveExpense: (tripId: string, expense: Expense) => void;
   deleteExpense: (tripId: string, expenseId: string) => void;
-  
+
   // Memory Actions
   fetchMemories: (tripId: string) => Memory[];
   saveMemory: (tripId: string, memory: Memory) => void;
@@ -213,6 +217,31 @@ export const useTripStore = create<TripState>((set, get) => {
         saveLocal(PACKING_KEY, current);
         set({ packingItems: current });
       }
+    },
+
+    // Convenience alias used by PackingTab and PhotoAI
+    addPackingItem: (tripId, item) => {
+      const fullItem = { ...item, quantity: item.quantity ?? 1, packed: (item as any).packed ?? false } as PackingItem;
+      const current = { ...get().packingItems };
+      const items = current[tripId] ? [...current[tripId]] : [];
+      items.push(fullItem);
+      current[tripId] = items;
+      saveLocal(PACKING_KEY, current);
+      set({ packingItems: current });
+    },
+
+    // Convenience to push a stop into a specific day of the active trip
+    addCustomStop: (tripId, dayIndex, stop) => {
+      const state = get();
+      const trip = state.trips.find(t => t.id === tripId);
+      if (!trip || !trip.itinerary) return;
+      const updatedItinerary = trip.itinerary.map((day, i) => {
+        if (i === dayIndex) {
+          return { ...day, stops: [...day.stops, stop] };
+        }
+        return day;
+      });
+      get().saveItinerary(tripId, updatedItinerary);
     },
 
     fetchExpenses: (tripId) => {

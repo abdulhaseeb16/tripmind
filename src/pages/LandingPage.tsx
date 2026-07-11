@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Star, Check, Sparkles, Send } from 'lucide-react';
 import { streamCompletion } from '../services/geminiService';
-import type { ChatMessage } from '../services/geminiService';
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -26,14 +25,10 @@ export const LandingPage: React.FC = () => {
     setIsDemoLoading(true);
     setDemoOutput('');
 
-    const demoMessages: ChatMessage[] = [
-      { role: 'user', content: demoInput }
-    ];
-
     try {
       await streamCompletion(
+        demoInput.trim(),
         "You are TripMind AI. Generate a concise, highly specific 3-sentence travel brief. Include one restaurant recommendation, one hidden gem landmark, and one local tip. Keep it extremely punchy.",
-        demoMessages,
         (token) => {
           setDemoOutput(prev => prev + token);
         }
