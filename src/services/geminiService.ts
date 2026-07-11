@@ -34,140 +34,82 @@ export async function streamCompletion(
   onToken: (token: string) => void
 ): Promise<string> {
   const { isMockMode } = useUIStore.getState();
-  const apiKey = import.meta.env.VITE_ZENMUX_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '';
-  const modelName = import.meta.env.VITE_ZENMUX_MODEL || 'google/gemini-2.0-flash';
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
   if (isMockMode || !apiKey || apiKey.includes('_key_here')) {
     return mockAiService.streamChat(userQuery, onToken);
   }
 
-  const isZenMux = apiKey.startsWith('AQ.');
-
   try {
-    if (isZenMux) {
-      const response = await fetch('https://zenmux.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userQuery }
-          ],
-          stream: true,
-          temperature: 0.7,
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`ZenMux completions responded ${response.status}: ${errText}`);
-      }
-
-      if (!response.body) throw new Error('Response body is null');
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let accumulatedText = '';
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const cleanLine = line.trim();
-          if (cleanLine.startsWith('data: ')) {
-            const dataStr = cleanLine.substring(6).trim();
-            if (dataStr === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(dataStr);
-              const text = parsed.choices?.[0]?.delta?.content || '';
-              if (text) {
-                onToken(text);
-                accumulatedText += text;
-              }
-            } catch (e) {
-              // Ignore
-            }
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: systemPrompt + '\n\n' + userQuery }]
           }
+        ],
+        generationConfig: {
+          temperature: 0.7
         }
-      }
+      })
+    });
 
-      return accumulatedText;
-    } else {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: systemPrompt + '\n\n' + userQuery }]
+    if (!response.ok || !response.body) {
+      const errText = await response.text();
+      throw new Error(`Gemini API responded ${response.status}: ${errText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulatedText = '';
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const cleanLine = line.trim();
+        if (cleanLine) {
+          try {
+            const parsed = JSON.parse(cleanLine);
+            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (text) {
+              onToken(text);
+              accumulatedText += text;
             }
-          ],
-          generationConfig: {
-            temperature: 0.7
-          }
-        })
-      });
-
-      if (!response.ok || !response.body) throw new Error(`Gemini streaming responded ${response.status}`);
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let accumulatedText = '';
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const cleanLine = line.trim();
-          if (cleanLine) {
+          } catch (e) {
+            let clean = cleanLine;
+            if (clean.startsWith('[')) clean = clean.substring(1).trim();
+            if (clean.startsWith(',')) clean = clean.substring(1).trim();
+            if (clean.endsWith(']')) clean = clean.substring(0, clean.length - 1).trim();
             try {
-              const parsed = JSON.parse(cleanLine);
+              const parsed = JSON.parse(clean);
               const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
               if (text) {
                 onToken(text);
                 accumulatedText += text;
               }
-            } catch (e) {
-              let clean = cleanLine;
-              if (clean.startsWith('[')) clean = clean.substring(1).trim();
-              if (clean.startsWith(',')) clean = clean.substring(1).trim();
-              if (clean.endsWith(']')) clean = clean.substring(0, clean.length - 1).trim();
-              try {
-                const parsed = JSON.parse(clean);
-                const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                if (text) {
-                  onToken(text);
-                  accumulatedText += text;
-                }
-              } catch (err) {
-                // Ignore
-              }
+            } catch (err) {
+              // Ignore
             }
           }
         }
       }
-
-      return accumulatedText;
     }
+
+    return accumulatedText;
   } catch (error: any) {
     console.error('AI request failed:', error);
-    const errMsg = `⚠️ Connection Error: ${error?.message || 'Failed to reach AI service'}. Ensure your API key is correct and your network allows direct requests to the model provider.`;
+    const errMsg = `⚠️ Connection Error: ${error?.message || 'Failed to reach AI service'}. Ensure your API key is correct.`;
     onToken(errMsg);
     return errMsg;
   }
@@ -280,15 +222,12 @@ export async function analyzePhoto(base64Data: string, fileName?: string): Promi
     return MOCK_PHOTO_RESULTS['landmark'];
   };
 
-  const apiKey = import.meta.env.VITE_ZENMUX_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '';
-  const modelName = import.meta.env.VITE_ZENMUX_MODEL || 'google/gemini-2.0-flash';
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
   if (isMockMode || !apiKey || apiKey.includes('_key_here')) {
     await new Promise(r => setTimeout(r, 1500));
     return getMockResult();
   }
-
-  const isZenMux = apiKey.startsWith('AQ.');
 
   const promptText = `Analyze this travel photo and return a detailed JSON object. Determine if it is a "landmark", "menu", "document", "landscape", or "unknown".
 
@@ -307,88 +246,47 @@ You MUST output ONLY a valid raw JSON object matching this schema. Do not wrap i
 }`;
 
   try {
-    if (isZenMux) {
-      const response = await fetch('https://zenmux.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: promptText,
-                },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: base64Data,
-                  },
-                },
-              ],
-            },
-          ],
-          response_format: { type: 'json_object' },
-          temperature: 0.3,
-        }),
-      });
+    const pureBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+    const mimeType = base64Data.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
 
-      if (!response.ok) throw new Error(`ZenMux API error: ${response.status}`);
-      const resJson = await response.json();
-      const textContent = resJson.choices?.[0]?.message?.content || '';
-
-      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
-      }
-    } else {
-      const pureBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-      const mimeType = base64Data.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: promptText
-                },
-                {
-                  inlineData: {
-                    mimeType,
-                    data: pureBase64
-                  }
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: promptText
+              },
+              {
+                inlineData: {
+                  mimeType,
+                  data: pureBase64
                 }
-              ]
-            }
-          ],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.3
+              }
+            ]
           }
-        })
-      });
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.3
+        }
+      })
+    });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Gemini direct API error ${response.status}: ${errText}`);
-      }
-      const resJson = await response.json();
-      const textContent = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Gemini direct API error ${response.status}: ${errText}`);
+    }
+    const resJson = await response.json();
+    const textContent = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
-      }
+    const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]) as PhotoAnalysisResult;
     }
     throw new Error('No valid JSON in API response');
   } catch (err) {
