@@ -1,6 +1,6 @@
 // src/pages/Dashboard.tsx
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, Calendar, MessageSquare, Compass, CheckSquare, BarChart3, Image, Settings, Sparkles, Plus, User, Menu, X, LogOut, Camera } from 'lucide-react';
 import { mockAuth } from '../services/supabaseClient';
 import type { Trip } from '../types';
@@ -8,15 +8,14 @@ import { TripCard } from '../components/TripCard';
 import { WeatherWidget } from '../components/WeatherWidget';
 
 interface SidebarProps {
-  activeTab: string;
-  onTabChange: (tab: string) => void;
+  activeTab?: string;
+  onTabChange?: (tab: string) => void;
   activeTrip: Trip | null;
   onTripChange: (trip: Trip | null) => void;
   trips: Trip[];
 }
 
 export const DashboardLayout: React.FC<SidebarProps & { children: React.ReactNode }> = ({
-  activeTab,
   onTabChange,
   activeTrip,
   onTripChange,
@@ -24,6 +23,7 @@ export const DashboardLayout: React.FC<SidebarProps & { children: React.ReactNod
   children
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const session = mockAuth.getSession();
   const user = session.user;
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -38,8 +38,21 @@ export const DashboardLayout: React.FC<SidebarProps & { children: React.ReactNod
     return null;
   }
 
+  // Derive active tab from current route pathname
+  const path = location.pathname;
+  let activeTab = 'home';
+  if (path.startsWith('/chat')) activeTab = 'chat';
+  else if (path.startsWith('/photo')) activeTab = 'photo';
+  else if (path.startsWith('/trips')) activeTab = 'trips';
+  else if (path.startsWith('/discover')) activeTab = 'discover';
+  else if (path.startsWith('/memories')) activeTab = 'memories';
+  else if (path.startsWith('/settings')) activeTab = 'settings';
+  else if (path.startsWith('/dashboard')) activeTab = 'home';
+
   const handleNavClick = (tabId: string, isMobile = false) => {
-    onTabChange(tabId);
+    if (onTabChange) {
+      onTabChange(tabId);
+    }
     if (isMobile) {
       setMobileMenuOpen(false);
     }
@@ -221,7 +234,9 @@ export const DashboardLayout: React.FC<SidebarProps & { children: React.ReactNod
           <button
             key={b.id}
             onClick={() => {
-              onTabChange(b.id);
+              if (onTabChange) {
+                onTabChange(b.id);
+              }
               navigate(b.route);
             }}
             className={`flex flex-col items-center gap-0.5 text-[9px] font-bold ${
