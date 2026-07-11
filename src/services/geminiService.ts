@@ -2,7 +2,6 @@
 import { useUIStore } from '../stores/uiStore';
 import { mockAiService } from './mockAiService';
 
-const PROXY_URL = '/functions/v1/ai-proxy';
 
 // Shared chat message type used across the app
 export interface ChatMessage {
@@ -35,45 +34,135 @@ export async function streamCompletion(
   onToken: (token: string) => void
 ): Promise<string> {
   const { isMockMode } = useUIStore.getState();
+  const apiKey = import.meta.env.VITE_ZENMUX_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '';
+  const modelName = import.meta.env.VITE_ZENMUX_MODEL || 'google/gemini-2.0-flash';
 
-  if (isMockMode) {
+  if (isMockMode || !apiKey || apiKey.includes('_key_here')) {
     return mockAiService.streamChat(userQuery, onToken);
   }
 
+  const isZenMux = apiKey.startsWith('AQ.');
+
   try {
-    const response = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('supabase_token') || 'anon'}`,
-      },
-      body: JSON.stringify({
-        contents: [
-          { role: 'user', parts: [{ text: systemPrompt + '\n\n' + userQuery }] }
-        ],
-        generationConfig: { temperature: 0.85, maxOutputTokens: 2048 },
-      }),
-    });
+    if (isZenMux) {
+      const response = await fetch('https://zenmux.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userQuery }
+          ],
+          stream: true,
+          temperature: 0.7,
+        }),
+      });
 
-    if (!response.ok || !response.body) throw new Error(`Proxy responded ${response.status}`);
+      if (!response.ok || !response.body) throw new Error(`ZenMux completions responded ${response.status}`);
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let accumulatedText = '';
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = '';
+      let buffer = '';
 
-    if (reader) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value);
-        onToken(chunk);
-        accumulatedText += chunk;
-      }
-    }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-    return accumulatedText;
+        for (const line of lines) {
+          const cleanLine = line.trim();
+          if (cleanLine.startsWith('data: ')) {
+            const dataStr = cleanLine.substring(6).trim();
+            if (dataStr === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              const text = parsed.choices?.[0]?.delta?.content || '';
+              if (text) {
+                onToken(text);
+                accumulatedText += text;
+              }
+            } catch (e) {
+              // Ignore
+            }
+          }
+        }
+      }
+
+      return accumulatedText;
+    } else {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: systemPrompt + '\n\n' + userQuery }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.7
+          }
+        })
+      });
+
+      if (!response.ok || !response.body) throw new Error(`Gemini streaming responded ${response.status}`);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const cleanLine = line.trim();
+          if (cleanLine) {
+            try {
+              const parsed = JSON.parse(cleanLine);
+              const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+              if (text) {
+                onToken(text);
+                accumulatedText += text;
+              }
+            } catch (e) {
+              let clean = cleanLine;
+              if (clean.startsWith('[')) clean = clean.substring(1).trim();
+              if (clean.startsWith(',')) clean = clean.substring(1).trim();
+              if (clean.endsWith(']')) clean = clean.substring(0, clean.length - 1).trim();
+              try {
+                const parsed = JSON.parse(clean);
+                const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (text) {
+                  onToken(text);
+                  accumulatedText += text;
+                }
+              } catch (err) {
+                // Ignore
+              }
+            }
+          }
+        }
+      }
+
+      return accumulatedText;
+    }
   } catch (error) {
-    console.warn('AI proxy request failed. Falling back to local mock AI service.', error);
+    console.warn('AI request failed. Falling back to local mock AI service.', error);
     return mockAiService.streamChat(userQuery, onToken);
   }
 }
