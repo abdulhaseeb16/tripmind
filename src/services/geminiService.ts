@@ -62,8 +62,12 @@ export async function streamCompletion(
         }),
       });
 
-      if (!response.ok || !response.body) throw new Error(`ZenMux completions responded ${response.status}`);
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`ZenMux completions responded ${response.status}: ${errText}`);
+      }
 
+      if (!response.body) throw new Error('Response body is null');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let accumulatedText = '';
@@ -161,9 +165,11 @@ export async function streamCompletion(
 
       return accumulatedText;
     }
-  } catch (error) {
-    console.warn('AI request failed. Falling back to local mock AI service.', error);
-    return mockAiService.streamChat(userQuery, onToken);
+  } catch (error: any) {
+    console.error('AI request failed:', error);
+    const errMsg = `⚠️ Connection Error: ${error?.message || 'Failed to reach AI service'}. Ensure your API key is correct and your network allows direct requests to the model provider.`;
+    onToken(errMsg);
+    return errMsg;
   }
 }
 
@@ -372,7 +378,10 @@ You MUST output ONLY a valid raw JSON object matching this schema. Do not wrap i
         })
       });
 
-      if (!response.ok) throw new Error(`Gemini direct API error: ${response.status}`);
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Gemini direct API error ${response.status}: ${errText}`);
+      }
       const resJson = await response.json();
       const textContent = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
