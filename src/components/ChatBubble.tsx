@@ -11,6 +11,67 @@ interface ChatBubbleProps {
 export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, onActionClick }) => {
   const isAi = message.role === 'assistant';
 
+  const renderMarkdown = (content: string) => {
+    const lines = content.split('\n');
+    let inList = false;
+    const parsedElements: string[] = [];
+
+    for (let line of lines) {
+      const trimmed = line.trim();
+
+      // Check for lists
+      if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+        if (!inList) {
+          parsedElements.push('<ul class="list-disc pl-5 my-2 space-y-1 text-sm sm:text-base">');
+          inList = true;
+        }
+        const itemText = trimmed.substring(2);
+        const processedText = itemText.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-brand-dark">$1</strong>');
+        parsedElements.push(`<li>${processedText}</li>`);
+        continue;
+      } else {
+        if (inList) {
+          parsedElements.push('</ul>');
+          inList = false;
+        }
+      }
+
+      // Check for horizontal rule
+      if (trimmed === '---') {
+        parsedElements.push('<hr class="my-3.5 border-brand-muted/15" />');
+        continue;
+      }
+
+      // Check for headers
+      if (trimmed.startsWith('### ')) {
+        const headerText = trimmed.substring(4);
+        const processedText = headerText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        parsedElements.push(`<h3 class="font-bold text-brand-dark text-base sm:text-lg mt-4 mb-2">${processedText}</h3>`);
+        continue;
+      }
+      if (trimmed.startsWith('#### ')) {
+        const headerText = trimmed.substring(5);
+        const processedText = headerText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        parsedElements.push(`<h4 class="font-bold text-brand-primary text-sm sm:text-base mt-3.5 mb-1.5">${processedText}</h4>`);
+        continue;
+      }
+
+      // Regular paragraph or empty line
+      if (trimmed === '') {
+        parsedElements.push('<div class="h-2"></div>');
+      } else {
+        const processedText = trimmed.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-brand-dark">$1</strong>');
+        parsedElements.push(`<p class="mb-2 leading-relaxed text-sm sm:text-base">${processedText}</p>`);
+      }
+    }
+
+    if (inList) {
+      parsedElements.push('</ul>');
+    }
+
+    return parsedElements.join('\n');
+  };
+
   return (
     <div className={`flex w-full ${isAi ? 'justify-start' : 'justify-end'} mb-4 animate-fade-in`}>
       <div className={`max-w-[85%] sm:max-w-[70%] flex gap-3 ${isAi ? 'flex-row' : 'flex-row-reverse'}`}>
@@ -28,10 +89,17 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, onActionClick }
               ? 'bg-white text-brand-dark border border-brand-muted/10 shadow-sm rounded-tl-none' 
               : 'bg-brand-primary text-white shadow rounded-tr-none'
           }`}>
-            {/* Direct formatted markdown rendering replacement */}
-            <div className="whitespace-pre-line break-words">
-              {message.content}
-            </div>
+            {/* Parsed Markdown Rendering for AI, secure plain text for User */}
+            {isAi ? (
+              <div 
+                className="break-words text-brand-dark"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
+              />
+            ) : (
+              <div className="whitespace-pre-line break-words text-white">
+                {message.content}
+              </div>
+            )}
 
             {/* Custom interactive widget if flagged as card data */}
             {message.isCard && message.cardType === 'itinerary' && (
