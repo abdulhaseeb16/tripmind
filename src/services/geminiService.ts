@@ -34,7 +34,8 @@ export async function streamCompletion(
   onToken: (token: string) => void
 ): Promise<string> {
   const { isMockMode } = useUIStore.getState();
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  const rawKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '');
 
   if (isMockMode || !apiKey || apiKey.includes('_key_here')) {
     return mockAiService.streamChat(userQuery, onToken);
@@ -222,7 +223,8 @@ export async function analyzePhoto(base64Data: string, fileName?: string): Promi
     return MOCK_PHOTO_RESULTS['landmark'];
   };
 
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  const rawKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '');
 
   if (isMockMode || !apiKey || apiKey.includes('_key_here')) {
     await new Promise(r => setTimeout(r, 1500));
