@@ -74,36 +74,61 @@ export async function streamCompletion(
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        const cleanLine = line.trim();
-        if (cleanLine) {
-          try {
-            const parsed = JSON.parse(cleanLine);
-            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (text) {
-              onToken(text);
-              accumulatedText += text;
+      let braceCount = 0;
+      let startIndex = -1;
+      let inString = false;
+      let escapeNext = false;
+      let i = 0;
+
+      while (i < buffer.length) {
+        const char = buffer[i];
+
+        if (escapeNext) {
+          escapeNext = false;
+          i++;
+          continue;
+        }
+
+        if (char === '\\') {
+          escapeNext = true;
+          i++;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+          i++;
+          continue;
+        }
+
+        if (!inString) {
+          if (char === '{') {
+            if (braceCount === 0) {
+              startIndex = i;
             }
-          } catch (e) {
-            let clean = cleanLine;
-            if (clean.startsWith('[')) clean = clean.substring(1).trim();
-            if (clean.startsWith(',')) clean = clean.substring(1).trim();
-            if (clean.endsWith(']')) clean = clean.substring(0, clean.length - 1).trim();
-            try {
-              const parsed = JSON.parse(clean);
-              const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-              if (text) {
-                onToken(text);
-                accumulatedText += text;
+            braceCount++;
+          } else if (char === '}') {
+            braceCount--;
+            if (braceCount === 0 && startIndex !== -1) {
+              const jsonStr = buffer.substring(startIndex, i + 1);
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (text) {
+                  onToken(text);
+                  accumulatedText += text;
+                }
+              } catch (e) {
+                // Ignore parsing errors on incomplete candidates
               }
-            } catch (err) {
-              // Ignore
+              buffer = buffer.substring(i + 1);
+              i = -1; // restart search
+              startIndex = -1;
             }
           }
         }
+        i++;
       }
     }
 
