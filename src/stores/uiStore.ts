@@ -11,9 +11,14 @@ export interface UIState {
   setOfflineState: (val: boolean) => void;
 }
 
+const hasApiKey = !!(
+  import.meta.env.VITE_ZENMUX_API_KEY || 
+  import.meta.env.VITE_GEMINI_API_KEY
+);
+
 export const useUIStore = create<UIState>((set) => ({
-  useLiveAi: false,
-  isMockMode: true, // true = use mock, false = use live Gemini proxy
+  useLiveAi: hasApiKey,
+  isMockMode: !hasApiKey, // false = use live Gemini/ZenMux API, true = use mock
   isOffline: !navigator.onLine,
 
   toggleAiMode: () => set((state) => ({
